@@ -4,9 +4,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  download-artifact:
+  Create Base:
     runs-on: ubuntu-latest
     steps:
+      - name: "📁 Create directories"
+        run: |
+          mkdir -p build
+
       - name: Download artifact zip using GitHub API
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -18,6 +22,29 @@ jobs:
 
       - name: Extract artifact
         run: |
-          unzip artifact.zip -d extracted-artifact
+          unzip artifact.zip -d build
           echo "Extracted files:"
-          ls -l extracted-artifact
+          ls -l build
+          sha256sum build/raspios64-base.img > build/raspios64-base.img.sha256
+
+      - name: "🛠 Unpack and rename image"
+        working-directory: ./build
+        run: |
+          # search for the image file in the build directory
+          IMG_FILE=$(ls *.img.xz | head -n 1)
+          echo "Found compressed Image file: ${IMG_FILE}"
+
+          # extract the image file
+          xz -d "${IMG_FILE}"
+
+          DECOMPRESSED_FILE="${IMG_FILE%.xz}"
+          echo "Image file: ${DECOMPRESSED_FILE}"
+
+          # rename the image file
+          mv "${DECOMPRESSED_FILE}" input.img
+
+      - name: "🔎 Show scripts"
+        working-directory: ./scripts
+        run: ls -la
+
+  
