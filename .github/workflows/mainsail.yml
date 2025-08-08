@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  Create Base:
+  Mainsail-Base:
     runs-on: ubuntu-latest
     steps:
       - name: "📁 Create directories"
