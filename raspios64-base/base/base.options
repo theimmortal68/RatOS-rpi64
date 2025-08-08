@@ -1,0 +1,7 @@
+# Comments are supported
+DEVICE_HOSTNAME=raspios
+# All variables will be translated to lower case and made available to hooks
+device_user1=pi
+dEvIcE_UsER1pASs=raspberry
+# Variables set in the .cfg file can be overridden
+IMAGE_NAME=raspios64-base

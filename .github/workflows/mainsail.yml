@@ -1,0 +1,23 @@
+name: Build MainsailOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  download-artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact zip using GitHub API
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Set these variables based on your artifact URL
+          ARTIFACT_URL="https://api.github.com/repos/theimmortal68/ratos-rpi64/actions/artifacts/3723393988/zip"
+          echo "Downloading artifact from $ARTIFACT_URL"
+          curl -L -H "Authorization: Bearer $GITHUB_TOKEN" -o artifact.zip $ARTIFACT_URL
+
+      - name: Extract artifact
+        run: |
+          unzip artifact.zip -d extracted-artifact
+          echo "Extracted files:"
+          ls -l extracted-artifact
