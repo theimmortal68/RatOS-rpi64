@@ -7,9 +7,8 @@ on:
 #      - main
 
 jobs:
-  build:
+  build-raspios-base:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,3 +48,45 @@ jobs:
           name: raspios64-base-img
           path: |
             output/raspios64-base.img.xz
+            
+  build-mainsailos-base:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "📁 Create directories"
+        run: |
+          mkdir -p build
+
+      - name: Download compressed image
+        working-directory: ./build
+        with:
+          name: raspios64-base-img
+
+      - name: Extract artifact
+        working-directory: ./build
+        run: |
+          unzip artifact.zip
+          echo "Extracted files:"
+          ls -l
+          sha256sum raspios64-base.img > raspios64-base.img.sha256
+
+      - name: "🛠 Unpack and rename image"
+        working-directory: ./build
+        run: |
+          # search for the image file in the build directory
+          IMG_FILE=$(ls *.img.xz | head -n 1)
+          echo "Found compressed Image file: ${IMG_FILE}"
+
+          # extract the image file
+          xz -d "${IMG_FILE}"
+
+          DECOMPRESSED_FILE="${IMG_FILE%.xz}"
+          echo "Image file: ${DECOMPRESSED_FILE}"
+
+          # rename the image file
+          mv "${DECOMPRESSED_FILE}" input.img
+
+      - name: "🔎 Show scripts"
+        working-directory: ./scripts
+        run: ls -la
+
+  
