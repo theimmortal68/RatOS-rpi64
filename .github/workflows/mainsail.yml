@@ -12,6 +12,7 @@ jobs:
           mkdir -p build
 
       - name: Download artifact zip using GitHub API
+        working-directory: ./build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -21,11 +22,12 @@ jobs:
           curl -L -H "Authorization: Bearer $GITHUB_TOKEN" -o artifact.zip $ARTIFACT_URL
 
       - name: Extract artifact
+        working-directory: ./build
         run: |
-          unzip artifact.zip -d build
+          unzip artifact.zip
           echo "Extracted files:"
-          ls -l build
-          sha256sum build/raspios64-base.img > build/raspios64-base.img.sha256
+          ls -l
+          sha256sum raspios64-base.img > raspios64-base.img.sha256
 
       - name: "🛠 Unpack and rename image"
         working-directory: ./build
