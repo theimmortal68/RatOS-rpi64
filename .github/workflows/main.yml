@@ -58,6 +58,7 @@ jobs:
 
       - name: Download compressed image
         working-directory: ./build
+        uses: actions/download-artifact@v4
         with:
           name: raspios64-base-img
 
