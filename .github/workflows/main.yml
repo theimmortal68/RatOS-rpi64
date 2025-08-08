@@ -2,9 +2,6 @@ name: Build RPi Image
 
 on:
   workflow_dispatch:
-#  push:
-#    branches:
-#      - main
 
 jobs:
   build-raspios-base:
@@ -13,13 +10,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Use official QEMU setup action for better caching and cross-platform support
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: all
 
-      # Optionally set up Buildx for enhanced docker usage and caching
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -46,48 +41,35 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: raspios64-base-img
-          path: |
-            output/raspios64-base.img.xz
-            
+          path: output/raspios64-base.img.xz
+
   build-mainsailos-base:
     runs-on: ubuntu-latest
+    needs: build-raspios-base
     steps:
-      - name: "📁 Create directories"
-        run: |
-          mkdir -p build
+      - name: "📁 Create build directory"
+        run: mkdir -p build
 
       - name: Download compressed image
-        working-directory: ./build
         uses: actions/download-artifact@v4
         with:
           name: raspios64-base-img
+          path: build
 
-      - name: Extract artifact
-        working-directory: ./build
+      - name: Verify downloaded file
         run: |
-          unzip artifact.zip
-          echo "Extracted files:"
-          ls -l
-          sha256sum raspios64-base.img > raspios64-base.img.sha256
+          echo "Downloaded files:"
+          ls -lh build
 
       - name: "🛠 Unpack and rename image"
-        working-directory: ./build
         run: |
-          # search for the image file in the build directory
-          IMG_FILE=$(ls *.img.xz | head -n 1)
+          IMG_FILE=$(ls build/*.img.xz | head -n 1)
           echo "Found compressed Image file: ${IMG_FILE}"
-
-          # extract the image file
           xz -d "${IMG_FILE}"
-
           DECOMPRESSED_FILE="${IMG_FILE%.xz}"
-          echo "Image file: ${DECOMPRESSED_FILE}"
-
-          # rename the image file
-          mv "${DECOMPRESSED_FILE}" input.img
+          mv "${DECOMPRESSED_FILE}" build/input.img
+          echo "Image ready: build/input.img"
 
       - name: "🔎 Show scripts"
         working-directory: ./scripts
         run: ls -la
-
-  
