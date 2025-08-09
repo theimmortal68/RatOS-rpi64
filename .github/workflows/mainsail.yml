@@ -7,17 +7,23 @@ jobs:
   download-artifact:
     runs-on: ubuntu-latest
     steps:
-      - name: Download artifact zip using GitHub API
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Make Build Workspace
+        run: mkdir build
+        
+      - name: Download RaspiOS Lite 64-Bit
+        working-directory: build
         run: |
-          # Set these variables based on your artifact URL
-          ARTIFACT_URL="https://api.github.com/repos/theimmortal68/ratos-rpi64/actions/artifacts/3723393988/zip"
-          echo "Downloading artifact from $ARTIFACT_URL"
-          curl -L -H "Authorization: Bearer $GITHUB_TOKEN" -o artifact.zip $ARTIFACT_URL
+          curl -L --progress-bar -o raspios-lite.img.xz \
+            https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+            
+      - name: Checkout current repository
+        uses: actions/checkout@v4
 
-      - name: Extract artifact
-        run: |
-          unzip artifact.zip -d extracted-artifact
-          echo "Extracted files:"
-          ls -l extracted-artifact
+      - name: Check Workspace
+        run: ls -lah
+
+      - name: Run CustoPiZer
+        uses: OctoPrint/CustoPiZer@v1.4.1
+        with:
+          workspace: "${{ github.workspace }}/build"
+          scripts:  "${{ github.workspace }}/scripts"
