@@ -31,7 +31,6 @@ jobs:
         run: |
           docker compose build
           docker compose run --rm \
-            --dns 8.8.8.8 \
             -v "${PWD}/../output:/mnt/output" \
             rpi_imagegen bash -c "
               set -e
