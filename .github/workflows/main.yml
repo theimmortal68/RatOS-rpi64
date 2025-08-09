@@ -10,8 +10,21 @@ jobs:
   pi-gen-with-larger-disk-space:
     runs-on: ubuntu-latest
     steps:
-      - uses: usimd/pi-gen-action@v1
+      - uses: usimd/pi-gen-action@v1.10.0
         with:
-          image-name: test
-          stage-list: stage0 stage1 stage2
+          image-name: raspios-base
+          stage-list: ./pi-gen/stage0 ./pi-gen/stage1 ./pi-gen/stage2
           increase-runner-disk-size: true
+          compression: xz
+          enable-ssh: 1
+          export-last-stage-only: true
+          hostname: raspios
+          keyboard-keymap: us
+          keyboard-layout: English (US)
+          locale: en_GB.UTF-8
+          password: raspberry
+          pi-gen-dir: pi-gen-orig
+          pi-gen-version: arm64
+          timezone: America/New_York
+          username: pi
+          wpa-country: 'us'
