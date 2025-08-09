@@ -24,7 +24,9 @@ jobs:
           sudo systemctl restart docker
 
       - name: Prepare output directory
-        run: mkdir -p output
+        run: |
+          mkdir -p output
+          sudo chmod 777 output
 
       - name: Build Image
         working-directory: raspios64-base
