@@ -28,3 +28,8 @@ jobs:
           timezone: America/New_York
           username: pi
           wpa-country: 'us'
+          
+      - uses: actions/upload-artifact@v3
+        with:
+          name: pi-gen-image
+          path: ${{ steps.build.outputs.image-path }}
