@@ -15,7 +15,9 @@ jobs:
         run: |
           curl -L --progress-bar -o raspios-lite.img.xz \
             https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
-            
+          xz -d raspios-lite.img.xz
+          mv raspios-lite.img input.img
+          
       - name: Check Workspace
         run: ls -lah *
 
