@@ -23,7 +23,7 @@ jobs:
           keyboard-layout: English (US)
           locale: en_GB.UTF-8
           password: raspberry
-          pi-gen-respository: theimmortal68/piu-gen
+          pi-gen-repository: theimmortal68/pi-gen
           pi-gen-version: arm64-base
           timezone: America/New_York
           username: pi
