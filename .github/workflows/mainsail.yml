@@ -35,7 +35,15 @@ jobs:
           mv raspios-lite.img input.img
 
       - name: Verify build directory contents
-        run: ls -lah build/
+        run: |
+          ls -lah build/
+          echo "PWD: $(pwd)"
+          echo "Listing RatOS-rpi64 directory:"
+          ls -l /home/runner/work/RatOS-rpi64/RatOS-rpi64/
+          echo "Checking build dir:"
+          [ -d "/home/runner/work/RatOS-rpi64/RatOS-rpi64/build" ] && echo "build dir exists" || echo "build dir missing"
+          echo "Checking scripts dir:"
+          [ -d "/home/runner/work/RatOS-rpi64/RatOS-rpi64/scripts" ] && echo "scripts dir exists" || echo "scripts dir missing"
 
       - name: Run CustoPiZer
         uses: OctoPrint/CustoPiZer@main
