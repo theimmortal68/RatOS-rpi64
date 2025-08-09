@@ -18,8 +18,8 @@ source /files/00-config
 ########################################
 
 SWAP_CONF_FILE="/etc/dphys-swapfile"
-SWAP_SIZE="256"
-SWAP_MAX="1024"
+SWAP_SIZE="1024"
+SWAP_MAX="4096"
 
 DEPS=(i2c-tools)
 
