@@ -7,9 +7,6 @@ jobs:
   download-artifact:
     runs-on: ubuntu-latest
     steps:
-      - name: Make Build Workspace
-        run: mkdir build
-        
       - name: Download RaspiOS Lite 64-Bit
         working-directory: build
         run: |
