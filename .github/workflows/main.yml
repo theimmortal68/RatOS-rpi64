@@ -76,4 +76,4 @@ jobs:
 
       - name: "🔎 Show Files"
         run: |
-          ls -lah scripts build
+          ls -lah ./ ./scripts ./build
