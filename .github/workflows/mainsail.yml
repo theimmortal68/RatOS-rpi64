@@ -42,3 +42,4 @@ jobs:
         with:
           workspace: "${{ github.workspace }}/build"
           scripts:  "${{ github.workspace }}/scripts"
+          config: "${{ github.workspace }}/config.local"
