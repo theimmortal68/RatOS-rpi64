@@ -6,10 +6,48 @@ on:
 jobs:
   build-mainsailos-base:
     runs-on: ubuntu-latest
+    needs: build-raspios-base
     steps:
       - name: "📥 Checkout"
         uses: actions/checkout@v4
+        
+      - name: Configure Docker DNS
+        run: |
+          echo '{ "dns": ["8.8.8.8", "8.8.4.4"] }' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
-      - name: "🔎 Show scripts"
-        working-directory: ./scripts
-        run: ls -la
+      - name: "📁 Create directories"
+        run: |
+          mkdir -p build
+
+      - name: Download compressed image
+        uses: actions/download-artifact@v4
+        with:
+          name: raspios64-base-img
+          path: build
+
+      - name: Verify downloaded file
+        run: |
+          echo "Downloaded files:"
+          ls -lh build
+
+      - name: "🛠 Unpack and rename image"
+        run: |
+          IMG_FILE=$(ls build/*.img.xz | head -n 1)
+          echo "Found compressed Image file: ${IMG_FILE}"
+          xz -d "${IMG_FILE}"
+          DECOMPRESSED_FILE="${IMG_FILE%.xz}"
+          mv "${DECOMPRESSED_FILE}" build/input.img
+          echo "Image ready: build/input.img"
+
+      - name: "🏗 Run CustoPiZer"
+        uses: OctoPrint/CustoPiZer@v1.4.1
+        with:
+          workspace: "${{ github.workspace }}/build"
+          scripts:  "${{ github.workspace }}/scripts"
+          config: "${{ github.workspace }}/config.local"
+
+      - name: "✏ Rename image"
+        working-directory: ./build
+        run: |
+          ls -lha
