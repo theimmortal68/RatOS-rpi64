@@ -1,0 +1,33 @@
+name: Build rpi-image-gen with QEMU aarch64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this workflow repo
+        uses: actions/checkout@v4
+
+      - name: Install QEMU and binfmt support
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static binfmt-support
+          sudo modprobe binfmt_misc
+          sudo mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
+          sudo update-binfmts --enable qemu-aarch64
+
+      - name: Checkout rpi-image-gen repo
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/rpi-image-gen
+          path: rpi-image-gen
+
+      - name: Make build.sh executable
+        run: chmod +x rpi-image-gen/build.sh
+
+      - name: Run build.sh script
+        working-directory: rpi-image-gen
+        run: ./build.sh
