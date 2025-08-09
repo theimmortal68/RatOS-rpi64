@@ -38,7 +38,7 @@ jobs:
         run: ls -lah build/
 
       - name: Run CustoPiZer
-        uses: OctoPrint/CustoPiZer@v1.4.1
+        uses: OctoPrint/CustoPiZer@main
         with:
           workspace: "${{ github.workspace }}/build"
           scripts:  "${{ github.workspace }}/scripts"
