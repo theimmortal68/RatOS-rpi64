@@ -23,6 +23,7 @@ SWAP_MAX="4096"
 
 DEPS=(i2c-tools)
 
+apt-get upgrade --yes
 apt-get install --yes "${DEPS[@]}"
 
 ########################################
