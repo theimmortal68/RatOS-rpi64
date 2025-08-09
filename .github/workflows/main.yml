@@ -50,11 +50,11 @@ jobs:
       - name: "📥 Checkout"
         uses: actions/checkout@v4
         
-      - name: "Configure Docker DNS"
-        run: echo '{ "dns": ["8.8.8.8", "1.1.1.1"] }' | sudo tee /etc/docker/daemon.json
-      - name: "Restart Docker"
-        run: sudo systemctl restart docker
-        
+      - name: Configure Docker DNS
+        run: |
+          echo '{ "dns": ["8.8.8.8", "8.8.4.4"] }' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
       - name: "📁 Create directories"
         run: |
           mkdir -p build
