@@ -21,7 +21,6 @@ jobs:
           increase-runner-disk-size: true
           compression: xz
           enable-ssh: 1
-          export-last-stage-only: true
           hostname: raspios
           keyboard-keymap: us
           keyboard-layout: English (US)
@@ -31,6 +30,7 @@ jobs:
           timezone: America/New_York
           username: pi
           wpa-country: 'us'
+          verbose-output: true
 
       - name: Upload pi-gen image artifact
         uses: actions/upload-artifact@v4
