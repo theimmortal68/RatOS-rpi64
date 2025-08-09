@@ -50,9 +50,10 @@ jobs:
       - name: "📥 Checkout"
         uses: actions/checkout@v4
         
-      - name: "📁 Create build directory"
-        run: mkdir -p build
-        run: mkdir -p scripts
+      - name: "📁 Create directories"
+        run: |
+          mkdir -p build
+          mkdir -p scripts
 
       - name: Download compressed image
         uses: actions/download-artifact@v4
