@@ -1,9 +1,0 @@
-services:
-    rpi_imagegen:
-        build: .
-        privileged: true
-        stdin_open: true
-        tty: true
-        image: rpi-imagegen:latest
-        volumes:
-            - ./base:/home/imagegen/base
