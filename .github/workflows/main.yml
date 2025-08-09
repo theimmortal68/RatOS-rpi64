@@ -75,11 +75,12 @@ jobs:
           echo "Image ready: build/input.img"
 
       - name: "🏗 Run CustoPiZer"
-        uses: OctoPrint/CustoPiZer@main
+        uses: OctoPrint/CustoPiZer@v1.4.1
         with:
           workspace: "${{ github.workspace }}/build"
           scripts:  "${{ github.workspace }}/scripts"
           config: "${{ github.workspace }}/config.local"
+          args: "--dns 8.8.8.8"
 
       - name: "✏ Rename image"
         working-directory: ./build
