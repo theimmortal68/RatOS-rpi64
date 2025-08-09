@@ -53,7 +53,6 @@ jobs:
       - name: "📁 Create directories"
         run: |
           mkdir -p build
-          mkdir -p scripts
 
       - name: Download compressed image
         uses: actions/download-artifact@v4
@@ -75,6 +74,6 @@ jobs:
           mv "${DECOMPRESSED_FILE}" build/input.img
           echo "Image ready: build/input.img"
 
-      - name: "🔎 Show scripts"
-        working-directory: ./scripts
-        run: ls -la
+      - name: "🔎 Show Files"
+        run: |
+          ls -lah scripts build
