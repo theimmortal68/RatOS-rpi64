@@ -13,7 +13,7 @@ jobs:
       - uses: usimd/pi-gen-action@v1.10.0
         with:
           image-name: raspios-base
-          stage-list: ./pi-gen/stage0 ./pi-gen/stage1 ./pi-gen/stage2
+          stage-list: stage0 stage1 stage2
           increase-runner-disk-size: true
           compression: xz
           enable-ssh: 1
@@ -23,8 +23,8 @@ jobs:
           keyboard-layout: English (US)
           locale: en_GB.UTF-8
           password: raspberry
-          pi-gen-dir: pi-gen-orig
-          pi-gen-version: arm64
+          pi-gen-respository: theimmortal68/piu-gen
+          pi-gen-version: arm64-base
           timezone: America/New_York
           username: pi
           wpa-country: 'us'
