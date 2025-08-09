@@ -18,58 +18,65 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Prepare output directory with permissions
-        run: mkdir -p output && chmod 777 output
-        
-      - name: Build Image
-        working-directory: raspios64-base
-        run: |
-          mkdir -p ../output
-          docker compose build
-          docker compose run --rm \
-            -v "${PWD}/../output:/mnt/output" \
-            rpi_imagegen bash -c "
-              echo 'Starting build...'
-              ./rpi-image-gen/build.sh -o ~/base/base.options -D ~/base -c base
-              cd /home/imagegen/rpi-image-gen/work/raspios64-base/deploy
-              xz -T3 -z9e raspios64-base.img
-              cp raspios64-base.img.xz /mnt/output/
-              echo 'Build Finished'"
-       
-      - name: Upload compressed image
-        uses: actions/upload-artifact@v4
-        with:
-          name: raspios64-base-img
-          path: output/raspios64-base.img.xz
-
-      - name: Rename asset for release
-        run: cp output/raspios64-base.img.xz output/raspios64-latest.img.xz
-
-      - name: Create GitHub Release (overwrite asset)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v1.0.0   # or ${{ github.ref_name }} or a dynamic tag
-          name: "Raspberry Pi Image Latest"
-          files: output/raspios64-latest.img.xz
-          overwrite: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  
-  build-mainsailos-base:
-    runs-on: ubuntu-latest
-    needs: build-raspios-base
-    steps:
-      - name: "📥 Checkout"
-        uses: actions/checkout@v4
-        
       - name: Configure Docker DNS
         run: |
           echo '{ "dns": ["8.8.8.8", "8.8.4.4"] }' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
 
-      - name: "📁 Create directories"
+      - name: Prepare output directory
+        run: mkdir -p output
+
+      - name: Build Image
+        working-directory: raspios64-base
         run: |
-          mkdir -p build
+          docker compose build
+          docker compose run --rm \
+            --dns 8.8.8.8 \
+            -v "${PWD}/../output:/mnt/output" \
+            rpi_imagegen bash -c "
+              set -e
+              echo 'Starting build...'
+              ./rpi-image-gen/build.sh -o ~/base/base.options -D ~/base -c base
+              cd /home/imagegen/rpi-image-gen/work/raspios64-base/deploy
+              xz -T3 -z9e raspios64-base.img
+              cp raspios64-base.img.xz /mnt/output/
+              echo 'Build Finished'
+            "
+
+      - name: Upload compressed image
+        uses: actions/upload-artifact@v4
+        with:
+          name: raspios64-base-img
+          path: output/raspios64-base.img.xz
+          if-no-files-found: error
+
+      - name: Generate release tag
+        id: tag
+        run: |
+          TAG="rpi-$(date +'%Y%m%d-%H%M%S')"
+          echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Create GitHub Release (overwrite asset)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "Raspberry Pi Image ${{ env.RELEASE_TAG }}"
+          files: output/raspios64-base.img.xz
+          overwrite: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-mainsailos-base:
+    runs-on: ubuntu-latest
+    needs: build-raspios-base
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure Docker DNS
+        run: |
+          echo '{ "dns": ["8.8.8.8", "8.8.4.4"] }' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
 
       - name: Download compressed image
         uses: actions/download-artifact@v4
@@ -77,28 +84,24 @@ jobs:
           name: raspios64-base-img
           path: build
 
-      - name: Verify downloaded file
+      - name: Verify download
         run: |
           echo "Downloaded files:"
           ls -lh build
 
-      - name: "🛠 Unpack and rename image"
+      - name: Decompress and rename image
         run: |
           IMG_FILE=$(ls build/*.img.xz | head -n 1)
-          echo "Found compressed Image file: ${IMG_FILE}"
+          echo "Found compressed image: ${IMG_FILE}"
           xz -d "${IMG_FILE}"
-          DECOMPRESSED_FILE="${IMG_FILE%.xz}"
-          mv "${DECOMPRESSED_FILE}" build/input.img
-          echo "Image ready: build/input.img"
+          mv "${IMG_FILE%.xz}" build/input.img
 
-      - name: "🏗 Run CustoPiZer"
+      - name: Run CustoPiZer
         uses: OctoPrint/CustoPiZer@v1.4.1
         with:
           workspace: "${{ github.workspace }}/build"
-          scripts:  "${{ github.workspace }}/scripts"
+          scripts: "${{ github.workspace }}/scripts"
           config: "${{ github.workspace }}/config.local"
 
-      - name: "✏ Rename image"
-        working-directory: ./build
-        run: |
-          ls -lha
+      - name: List final image
+        run: ls -lha build
