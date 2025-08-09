@@ -47,8 +47,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-raspios-base
     steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        
       - name: "📁 Create build directory"
         run: mkdir -p build
+        run: mkdir -p scripts
 
       - name: Download compressed image
         uses: actions/download-artifact@v4
