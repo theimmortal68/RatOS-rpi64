@@ -80,6 +80,7 @@ jobs:
           workspace: "${{ github.workspace }}/build"
           scripts:  "${{ github.workspace }}/scripts"
           config: "${{ github.workspace }}/config.local"
+          args: "--dns 8.8.8.8"
 
       - name: "✏ Rename image"
         working-directory: ./build
