@@ -74,6 +74,14 @@ jobs:
           mv "${DECOMPRESSED_FILE}" build/input.img
           echo "Image ready: build/input.img"
 
-      - name: "🔎 Show Files"
+      - name: "🏗 Run CustoPiZer"
+        uses: OctoPrint/CustoPiZer@main
+        with:
+          workspace: "${{ github.workspace }}/build"
+          scripts:  "${{ github.workspace }}/scripts"
+          config: "${{ github.workspace }}/config.local"
+
+      - name: "✏ Rename image"
+        working-directory: ./build
         run: |
-          ls -lah ./ ./scripts ./build
+          ls -lha
