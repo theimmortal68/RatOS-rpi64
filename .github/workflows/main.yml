@@ -34,15 +34,27 @@ jobs:
               cd /home/imagegen/rpi-image-gen/work/raspios64-base/deploy
               xz -T3 -z9e raspios64-base.img
               cp raspios64-base.img.xz /mnt/output/
-              echo 'Build Finished'
-            "
-            
+              echo 'Build Finished'"
+       
       - name: Upload compressed image
         uses: actions/upload-artifact@v4
         with:
           name: raspios64-base-img
           path: output/raspios64-base.img.xz
 
+      - name: Rename asset for release
+        run: cp output/raspios64-base.img.xz output/raspios64-latest.img.xz
+
+      - name: Create GitHub Release (overwrite asset)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0   # or ${{ github.ref_name }} or a dynamic tag
+          name: "Raspberry Pi Image Latest"
+          files: output/raspios64-latest.img.xz
+          overwrite: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  
   build-mainsailos-base:
     runs-on: ubuntu-latest
     needs: build-raspios-base
