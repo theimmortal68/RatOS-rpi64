@@ -9,8 +9,12 @@ on:
 jobs:
   pi-gen-with-larger-disk-space:
     runs-on: ubuntu-latest
+    outputs:
+      image-path: ${{ steps.pi-gen.outputs.image-path }}
+
     steps:
-      - uses: usimd/pi-gen-action@v1.10.0
+      - id: pi-gen
+        uses: usimd/pi-gen-action@v1.10.0
         with:
           image-name: raspios-base
           stage-list: stage0 stage1 stage2
@@ -21,15 +25,38 @@ jobs:
           hostname: raspios
           keyboard-keymap: us
           keyboard-layout: English (US)
-          locale: en_GB.UTF-8
+          locale: en_US.UTF-8
           password: raspberry
-          pi-gen-repository: theimmortal68/pi-gen
-          pi-gen-version: arm64-base
+          pi-gen-version: arm64
           timezone: America/New_York
           username: pi
           wpa-country: 'us'
-          
-      - uses: actions/upload-artifact@v4
+
+      - name: Upload pi-gen image artifact
+        uses: actions/upload-artifact@v4
         with:
           name: pi-gen-image
-          path: ${{ steps.build.outputs.image-path }}
+          path: ${{ steps.pi-gen.outputs.image-path }}
+
+      - name: Create Release Tag
+        id: create_tag
+        run: |
+          TAG="rpi-image-$(date -u +'%Y%m%d%H%M%S')"
+          echo "tag_name=$TAG" >> $GITHUB_OUTPUT
+          echo "Created tag $TAG"
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ steps.create_tag.outputs.tag_name }}
+          release_name: Release ${{ steps.create_tag.outputs.tag_name }}
+          body: Automated Raspberry Pi OS image build
+          draft: false
+          prerelease: false
+
+      - name: Upload Image to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ steps.pi-gen.outputs.image-path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
