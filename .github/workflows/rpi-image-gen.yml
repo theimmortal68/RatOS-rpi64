@@ -30,7 +30,7 @@ jobs:
 
       - name: Run install_deps.sh script
         working-directory: rpi-image-gen
-        run: ./install_deps.sh
+        run: sudo ./install_deps.sh
 
       - name: Run build.sh script
         working-directory: rpi-image-gen
