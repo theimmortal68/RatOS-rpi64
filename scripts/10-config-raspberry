@@ -23,7 +23,9 @@ SWAP_MAX="4096"
 
 DEPS=(i2c-tools)
 
-apt-get upgrade --yes
+export DEBIAN_FRONTEND=noninteractive
+sudo apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+
 apt-get install --yes "${DEPS[@]}"
 
 ########################################
