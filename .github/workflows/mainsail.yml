@@ -13,8 +13,9 @@ jobs:
       - name: Download RaspiOS Lite 64-Bit
         working-directory: build
         run: |
-          curl -L -H -o raspios-lite.img.xz https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
-
+          curl -L --progress-bar -o raspios-lite.img.xz \
+            https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+            
       - name: Checkout mainsailos repo
         uses: actions/checkout@v4
         with:
