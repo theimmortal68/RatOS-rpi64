@@ -25,8 +25,12 @@ jobs:
           repository: raspberrypi/rpi-image-gen
           path: rpi-image-gen
 
-      - name: Make build.sh executable
-        run: chmod +x rpi-image-gen/build.sh
+      - name: Make scripts executable
+        run: chmod +x rpi-image-gen/install_deps.sh rpi-image-gen/build.sh
+
+      - name: Run install_deps.sh script
+        working-directory: rpi-image-gen
+        run: ./install_deps.sh
 
       - name: Run build.sh script
         working-directory: rpi-image-gen
