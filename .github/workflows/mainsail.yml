@@ -23,6 +23,9 @@ jobs:
           ref: develop
           path: mainsailos
 
+      - name: Check Workspace
+        run: ls -lah
+
       - name: Run CustoPiZer
         uses: OctoPrint/CustoPiZer@v1.4.1
         with:
