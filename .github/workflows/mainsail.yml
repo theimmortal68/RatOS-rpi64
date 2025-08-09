@@ -21,6 +21,6 @@ jobs:
 
       - name: Run CustoPiZer
         uses: OctoPrint/CustoPiZer@v1.4.1
-          with:
-            workspace: "${{ github.workspace }}/build"
-            scripts:  "${{ github.workspace }}/scripts"
+        with:
+          workspace: "${{ github.workspace }}/build"
+          scripts:  "${{ github.workspace }}/scripts"
