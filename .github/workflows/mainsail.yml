@@ -16,6 +16,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-user-static binfmt-support
 
+      - name: Cache input.img
+        uses: actions/cache@v3
+        id: cache-input-img
+        with:
+          path: build/input.img
+          key: ${{ runner.os }}-input-img-v2025-05-13
+          restore-keys: |
+            ${{ runner.os }}-input-img-
+            
+      - name: Download and extract RaspiOS Lite 64-Bit if cache miss
+        if: steps.cache-input-img.outputs.cache-hit != 'true'
+        working-directory: build
+        run: |
+          curl -L --progress-bar -o raspios-lite.img.xz \
+            https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+          xz -d raspios-lite.img.xz
+          mv raspios-lite.img input.img
+
       - name: Run CustoPiZer
         uses: OctoPrint/CustoPiZer@main
         with:
