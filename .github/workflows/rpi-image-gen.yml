@@ -1,4 +1,4 @@
-name: Build rpi-image-gen with QEMU aarch64
+name: Build RaspiOS Base Image
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ jobs:
       - name: Checkout rpi-image-gen repo
         uses: actions/checkout@v4
         with:
-          repository: raspberrypi/rpi-image-gen
+          repository: theimmortal68/rpi-image-gen
           path: rpi-image-gen
 
       - name: Make scripts executable
