@@ -42,7 +42,7 @@ jobs:
         run: sudo ./install_deps.sh
 
       - name: Run build.sh script
-        run: ./rpi-image-gen/build.sh -o ./base/base.options -c ./base/config/base.cfg
+        run: ./rpi-image-gen/build.sh -o ./base/base.options -D ./base -c base.cfg
 
       - name: Compress built image with xz
         run: |
