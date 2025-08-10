@@ -54,7 +54,7 @@ jobs:
           set -e
           BUILDDATE=$(date +'%Y-%m-%d_%H-%M-%S')
           echo "BUILDDATE=$BUILDDATE" >> $GITHUB_ENV
-          mv "/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/deb12-arm64-min/deploy/raspios-base.img.xz" \
+          mv "/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/raspios-base/deploy/raspios-base.img.xz" \
              "raspios-base-${BUILDDATE}.img.xz"
 
       - name: Delete old 'latest' release if exists
