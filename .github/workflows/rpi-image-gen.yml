@@ -45,7 +45,7 @@ jobs:
       - name: Compress built image with xz
         run: |
           set -e
-          IMG_PATH="/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/deb12-arm64-min/deploy/raspios-base.img"
+          IMG_PATH="/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/raspios-base/deploy/raspios-base.img"
           xz -efvz9T3 "$IMG_PATH"
 
       - name: Prepare release artifact and timestamp
