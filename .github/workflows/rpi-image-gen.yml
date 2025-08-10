@@ -8,23 +8,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout this workflow repo
+      - name: Checkout workflow repo
         uses: actions/checkout@v4
 
-      - name: Import missing Debian repo GPG keys
+      - name: Install dependencies and GitHub CLI
         run: |
-          sudo apt-get install -y gnupg2 curl
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y \
+            gnupg2 curl qemu-user-static binfmt-support gh
+          # Import missing Debian repo GPG keys
           for key in 0E98404D386FA1D9 6ED0E7B82643E131 F8D2585B8783D481 54404762BBB6E853 BDE6D2B9216EC7A8 78DBA3BC47EF2265; do
             sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys $key || \
             curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${key}" | sudo gpg --dearmor -o /usr/share/keyrings/${key}.gpg
           done
-
-      - name: Install QEMU and binfmt support
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get update
-          sudo apt-get install -y qemu-user-static binfmt-support
-          sudo modprobe binfmt_misc
+          sudo modprobe binfmt_misc || true
           sudo mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
           sudo update-binfmts --enable qemu-aarch64
 
@@ -37,15 +35,40 @@ jobs:
       - name: Make scripts executable
         run: chmod +x rpi-image-gen/install_deps.sh rpi-image-gen/build.sh
 
-      - name: Run install_deps.sh script
+      - name: Install build dependencies
         working-directory: rpi-image-gen
         run: sudo ./install_deps.sh
 
-      - name: Run build.sh script
+      - name: Build image
         run: ./rpi-image-gen/build.sh -o ./base/base.options -D ./base -c base.cfg
 
       - name: Compress built image with xz
         run: |
-          xz -9 /home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/deb12-arm64-min/deploy/raspios-base.img
-        # This creates deb12-arm64-min.img.xz next to the original image
+          set -e
+          IMG_PATH="/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/deb12-arm64-min/deploy/raspios-base.img"
+          xz -efvz9T3 "$IMG_PATH"
 
+      - name: Prepare release artifact and timestamp
+        id: buildinfo
+        run: |
+          set -e
+          BUILDDATE=$(date +'%Y-%m-%d_%H-%M-%S')
+          echo "BUILDDATE=$BUILDDATE" >> $GITHUB_ENV
+          mv "/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/deb12-arm64-min/deploy/raspios-base.img.xz" \
+             "raspios-base-${BUILDDATE}.img.xz"
+
+      - name: Delete old 'latest' release if exists
+        run: |
+          if gh release view latest &>/dev/null; then
+            gh release delete latest --yes
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create new 'latest' GitHub Release
+        run: |
+          gh release create latest "raspios-base-${BUILDDATE}.img.xz" \
+            --title "RaspiOS Base Image — ${BUILDDATE}" \
+            --notes "This is the latest RaspiOS base image build.\n**Build date:** ${BUILDDATE}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
