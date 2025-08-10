@@ -46,6 +46,6 @@ jobs:
 
       - name: Compress built image with xz
         run: |
-          xz -9 /home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/deb12-arm64-min/deploy/deb12-arm64-min.img
+          xz -9 /home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/deb12-arm64-min/deploy/raspios-base.img
         # This creates deb12-arm64-min.img.xz next to the original image
 
