@@ -2,73 +2,188 @@ name: Build RaspiOS Base Image
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create/replace 'latest' GitHub Release?"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false","true"]
+      compress:
+        description: "xz-compress the image?"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false","true"]
+      debug:
+        description: "Verbose build (bash -x) and keep logs/working dirs?"
+        required: true
+        default: "true"
+        type: choice
+        options: ["false","true"]
+      cacheKey:
+        description: "Optional cache salt (bump to bust cache)"
+        required: false
+        default: ""
+
+concurrency:
+  group: raspi-base-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Local service: apt-cacher-ng to speed repeated apt downloads
+    services:
+      apt-cacher-ng:
+        image: ghcr.io/sameersbn/apt-cacher-ng:3.7-1
+        ports:
+          - 3142:3142
+        options: >-
+          --health-cmd="bash -c 'curl -fsS http://localhost:3142/acng-report.html >/dev/null'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=8
+
+    env:
+      WRK: ${{ github.workspace }}/rpi-image-gen/work/raspios-base
+      DOWNLOADS: ${{ github.workspace }}/rpi-image-gen/work/downloads
+      DEPLOY: ${{ github.workspace }}/rpi-image-gen/work/raspios-base/deploy
+      DO_PUBLISH: ${{ inputs.publish }}
+      DO_COMPRESS: ${{ inputs.compress }}
+      DO_DEBUG: ${{ inputs.debug }}
+      # Proxy used both by host apt and (when supported) passed into mmdebstrap
+      APT_PROXY_URL: http://apt-cacher-ng:3142
+      # Common apt opts string you can export into your build if supported
+      APT_PROXY_OPTS: Acquire::http::Proxy "http://apt-cacher-ng:3142"; Acquire::https::Proxy "http://apt-cacher-ng:3142";
+
     steps:
       - name: Checkout workflow repo
         uses: actions/checkout@v4
-
-      - name: Install dependencies and GitHub CLI
-        run: |
-          set -e
-          sudo apt-get update
-          sudo apt-get install -y \
-            gnupg2 curl qemu-user-static binfmt-support gh
-          # Import missing Debian repo GPG keys
-          for key in 0E98404D386FA1D9 6ED0E7B82643E131 F8D2585B8783D481 54404762BBB6E853 BDE6D2B9216EC7A8 78DBA3BC47EF2265; do
-            sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys $key || \
-            curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${key}" | sudo gpg --dearmor -o /usr/share/keyrings/${key}.gpg
-          done
-          sudo modprobe binfmt_misc || true
-          sudo mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
-          sudo update-binfmts --enable qemu-aarch64
+        with:
+          fetch-depth: 1
 
       - name: Checkout rpi-image-gen repo
         uses: actions/checkout@v4
         with:
           repository: theimmortal68/rpi-image-gen
           path: rpi-image-gen
+          fetch-depth: 1
+
+      # ---------- CACHES ----------
+      - name: Cache downloads + aptcache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.DOWNLOADS }}
+            ${{ env.WRK }}/aptcache
+          key: downloads-${{ runner.os }}-${{ hashFiles('rpi-image-gen/**', 'base/**', 'base.cfg') }}-${{ inputs.cacheKey }}
+          restore-keys: |
+            downloads-${{ runner.os }}-
+
+      - name: Setup ccache (optional)
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: raspi-base
+
+      # ---------- HOST SETUP ----------
+      - name: Install host dependencies & enable binfmt
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo tee /etc/apt/apt.conf.d/01proxy >/dev/null <<EOF
+          Acquire::http::Proxy "${APT_PROXY_URL}";
+          Acquire::https::Proxy "${APT_PROXY_URL}";
+          EOF
+          sudo apt-get install -y --no-install-recommends \
+            gnupg2 curl qemu-user-static binfmt-support gh xz-utils
+          sudo modprobe binfmt_misc || true
+          sudo mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
+          sudo update-binfmts --enable qemu-aarch64
 
       - name: Make scripts executable
         run: chmod +x rpi-image-gen/install_deps.sh rpi-image-gen/build.sh
 
-      - name: Install build dependencies
+      - name: Install build dependencies (script)
         working-directory: rpi-image-gen
         run: sudo ./install_deps.sh
 
+      # ---------- BUILD ----------
       - name: Build image
-        run: ./rpi-image-gen/build.sh -o ./base/base.options -D ./base -c base.cfg
-
-      - name: Compress built image with xz
+        env:
+          APT_CACHE_DIR: ${{ env.WRK }}/aptcache
+          # Expose proxy to anything honoring env proxies (curl, wget, some apt flows)
+          http_proxy: ${{ env.APT_PROXY_URL }}
+          https_proxy: ${{ env.APT_PROXY_URL }}
+          HTTP_PROXY: ${{ env.APT_PROXY_URL }}
+          HTTPS_PROXY: ${{ env.APT_PROXY_URL }}
+          # If your build script/mmdebstrap supports passing apt options, export them:
+          MMDEBSTRAP_APTOPTS: ${{ env.APT_PROXY_OPTS }}
+          BDEBSTRAP_APTOPTS: ${{ env.APT_PROXY_OPTS }}
         run: |
-          set -e
-          IMG_PATH="/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/raspios-base/deploy/raspios-base.img"
-          xz -efvz9T3 "$IMG_PATH"
+          set -euo pipefail
+          mkdir -p "${APT_CACHE_DIR}" "${{ env.DOWNLOADS }}"
+          if [ "${{ env.DO_DEBUG }}" = "true" ]; then
+            set -x
+            ./rpi-image-gen/build.sh -o ./base/base.options -D ./base -c base.cfg |& tee build.log
+          else
+            ./rpi-image-gen/build.sh -o ./base/base.options -D ./base -c base.cfg
+          fi
 
-      - name: Prepare release artifact and timestamp
+      # ---------- ARTIFACTS ----------
+      - name: Determine build info and rename image
         id: buildinfo
         run: |
-          set -e
+          set -euo pipefail
+          IMG="${{ env.DEPLOY }}/raspios-base.img"
+          if [ ! -f "$IMG" ]; then
+            echo "Image not found at $IMG" >&2
+            echo "Listing deploy dir:" >&2
+            ls -la "${{ env.DEPLOY }}" || true
+            exit 1
+          fi
           BUILDDATE=$(date +'%Y-%m-%d_%H-%M-%S')
-          echo "BUILDDATE=$BUILDDATE" >> $GITHUB_ENV
-          mv "/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/raspios-base/deploy/raspios-base.img.xz" \
-             "raspios-base-${BUILDDATE}.img.xz"
+          OUT="raspios-base-${BUILDDATE}.img"
+          mv "$IMG" "$OUT"
+          echo "BUILDDATE=$BUILDDATE" >> "$GITHUB_ENV"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
 
-      - name: Delete old 'latest' release if exists
+      - name: (Optional) Compress image with xz
+        if: env.DO_COMPRESS == 'true'
         run: |
+          set -euo pipefail
+          xz -efv9T0 "$OUT"
+          echo "OUT=${OUT}.xz" >> "$GITHUB_ENV"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUT }}
+          path: |
+            ${{ env.OUT }}
+            build.log
+            rpi-image-gen/work/**/*
+          if-no-files-found: warn
+          compression-level: 0
+
+      # ---------- PUBLISH (OPTIONAL) ----------
+      - name: Delete old 'latest' release (if publishing)
+        if: env.DO_PUBLISH == 'true'
+        run: |
+          set -euo pipefail
           if gh release view latest &>/dev/null; then
             gh release delete latest --yes
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create new 'latest' GitHub Release
+      - name: Create new 'latest' GitHub Release (if publishing)
+        if: env.DO_PUBLISH == 'true'
         run: |
-          gh release create latest "raspios-base-${BUILDDATE}.img.xz" \
+          set -euo pipefail
+          gh release create latest "${OUT}" \
             --title "RaspiOS Base Image — ${BUILDDATE}" \
-            --notes "This is the latest RaspiOS base image build.\n**Build date:** ${BUILDDATE}"
+            --notes "Latest RaspiOS base image build.\n**Build date:** ${BUILDDATE}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
