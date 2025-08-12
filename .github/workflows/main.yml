@@ -1,4 +1,4 @@
-name: Build RPi64 image (bdebstrap)
+name: Build RPi64 image (mmdebstrap from YAML)
 
 on:
   workflow_dispatch:
@@ -6,13 +6,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Speed up repeated runs by caching apt state
       - name: Restore apt cache
         uses: actions/cache@v4
         with:
@@ -23,18 +22,112 @@ jobs:
           restore-keys: |
             apt-${{ runner.os }}-
 
-      - name: Install system deps (mmdebstrap, binfmt, tooling)
+      - name: Install system deps
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            mmdebstrap kpartx dosfstools e2fsprogs fdisk util-linux \
-            qemu-user-static binfmt-support \
-            xz-utils rsync curl ca-certificates jq python3-pip python3-venv
+            mmdebstrap qemu-user-static binfmt-support \
+            kpartx dosfstools e2fsprogs fdisk util-linux \
+            xz-utils rsync curl ca-certificates jq \
+            apt-cacher-ng \
+            yq
 
-          # Enable ARM binfmt (usually already enabled on GH runners)
+          # Enable ARM binfmt (usually already enabled)
           sudo modprobe binfmt_misc || true
           sudo mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
+          sudo update-binfmts --enable qemu-aarch64 || true
+
+          # Start apt-cacher-ng (for speed)
+          sudo systemctl enable --now apt-cacher-ng || true
+          curl -fsS http://127.0.0.1:3142/acng-report.html >/dev/null || true
+
+      - name: Build image using rpi64.yaml
+        env:
+          # Make apt inside chroot use the local cacher
+          APT_HTTP_PROXY: http://127.0.0.1:3142
+        run: |
+          set -euxo pipefail
+
+          YAML=rpi64.yaml
+
+          # Pull values (with sane defaults)
+          SUITE="$(yq -r '.mmdebstrap.suite // "bookworm"' "$YAML")"
+          MIRROR="$(yq -r '.mmdebstrap.mirror // "http://deb.debian.org/debian"' "$YAML")"
+          VARIANT="$(yq -r '.mmdebstrap.variant // "apt"' "$YAML")"
+
+          # Packages array -> space list
+          PKGS="$(yq -r '.mmdebstrap.packages // [] | join(" ")' "$YAML")"
+
+          # Hooks (each becomes one --setup-hook / --customize-hook)
+          # Setup hooks (run before package install)
+          mapfile -t SETUP_HOOKS < <(yq -r '.mmdebstrap["setup-hooks"] // [] | .[]' "$YAML")
+          # Customize hooks (run after debootstrap)
+          mapfile -t CUSTOM_HOOKS < <(yq -r '.mmdebstrap["customize-hooks"] // [] | .[]' "$YAML")
+
+          # Construct mmdebstrap command args
+          ARGS=( "--variant=$VARIANT" )
+
+          # Add setup-hooks
+          for h in "${SETUP_HOOKS[@]}"; do
+            # mmdebstrap wants the shell line directly
+            ARGS+=( "--setup-hook=$h" )
+          done
+
+          # Add customize-hooks
+          for h in "${CUSTOM_HOOKS[@]}"; do
+            ARGS+=( "--customize-hook=$h" )
+          done
+
+          # Output image name
+          OUT="rpi64-$(date +%Y%m%d-%H%M%S).img"
+
+          # Run mmdebstrap:
+          # - This assumes your YAML hooks handle image partitioning/loop mounting OR
+          #   you’re building a rootfs tar. If your hooks already dd/format/mount and
+          #   produce $OUT themselves, set TARGET=/dev/null to avoid an extra tarball.
+          #
+          # Example: produce a rootfs tarball first, then convert to image inside hooks,
+          # or use --customize-hook steps that do the image creation. If your YAML
+          # already does everything, we can set TARGET=/dev/null and let hooks write OUT.
+          #
+          TARGET="rootfs.tar"
+          mmdebstrap \
+            --aptopt='Acquire::http::Proxy "'"$APT_HTTP_PROXY"'"' \
+            "${ARGS[@]}" \
+            "$SUITE" "$TARGET" "$MIRROR"
+
+          # If your hooks already wrote an .img, prefer that:
+          if ls -1 *.img >/dev/null 2>&1; then
+            echo "Using image produced by hooks."
+          else
+            echo "No .img produced by hooks; you likely need a hook that creates and populates partitions."
+            echo "We built a rootfs tarball: $TARGET"
+            # Stop with error to avoid uploading nothing:
+            exit 1
+          fi
+
+      - name: Compress image
+        if: always()
+        run: |
+          set -euxo pipefail
+          IMG="$(ls -1t *.img | head -n1)"
+          [ -n "$IMG" ]
+          xz -T0 -9ev "$IMG"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpi64-image
+          path: |
+            *.img.xz
+          if-no-files-found: error
+
+      - name: apt-cacher-ng stats (optional)
+        if: always()
+        run: |
+          set -euxo pipefail
+          curl -fsS http://127.0.0.1:3142/acng-report.html | head -n 200 || true          sudo mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
           sudo update-binfmts --enable qemu-aarch64 || true
 
           # Install the bdebstrap Python CLI (if you use it to drive mmdebstrap)
