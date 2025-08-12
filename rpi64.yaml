@@ -1,0 +1,361 @@
+name: minimal-rpi5-image
+mmdebstrap:
+  variant: apt
+  architecture: arm64
+
+  packages:
+    - linux-image-arm64
+    - initramfs-tools
+    - systemd-sysv
+    - openssh-server
+    - sudo
+    - raspi-firmware
+    - firmware-brcm80211
+    - ca-certificates
+    # Wi-Fi + NM
+    - network-manager
+    - wireless-regdb
+    - iw
+    # Hotspot helpers (for IPv4 shared)
+    - dnsmasq-base
+    - iptables
+    # regionalization
+    - locales
+    - keyboard-configuration
+    - tzdata
+    # handy tools
+    - net-tools
+
+  setup-hook:
+    - |
+      echo "[host] ensure required host tools"
+      command -v sfdisk >/dev/null || (apt-get update && apt-get install -y fdisk)
+      command -v mkfs.vfat >/dev/null || (apt-get update && apt-get install -y dosfstools)
+      command -v mkfs.ext4 >/dev/null || (apt-get update && apt-get install -y e2fsprogs)
+      command -v losetup >/dev/null || (apt-get update && apt-get install -y util-linux)
+      command -v kpartx >/dev/null || (apt-get update && apt-get install -y kpartx)
+
+      echo "[host] create image and partitions"
+      IMG="/tmp/rpi5-minimal.img"
+      : > "$IMG"
+      truncate -s 1536M "$IMG"
+
+      sfdisk "$IMG" <<'EOF'
+      label: dos
+      unit: MiB
+      1,256,c,*
+      ,,-,-
+      EOF
+
+      echo "[host] attach loop device"
+      LOOPDEV="$(losetup --show -Pf "$IMG")"
+      echo "$LOOPDEV" > /tmp/rpi_loopdev
+      BOOT="${LOOPDEV}p1"; ROOT="${LOOPDEV}p2"
+
+      echo "[host] make filesystems"
+      mkfs.vfat -F32 -n BOOT "$BOOT"
+      mkfs.ext4 -L rootfs "$ROOT"
+
+      echo "[host] mount target"
+      mkdir -p "$1"
+      mount "$ROOT" "$1"
+      mkdir -p "$1/boot/firmware"
+      mount "$BOOT" "$1/boot/firmware"
+
+  customize-hooks:
+    # Hostname and hosts
+    - |
+      echo "[target] hostname and /etc/hosts"
+      echo "raspberrypi" > "$1/etc/hostname"
+      grep -qE "127\.0\.1\.1[[:space:]]+raspberrypi" "$1/etc/hosts" 2>/dev/null || \
+        echo "127.0.1.1 raspberrypi" >> "$1/etc/hosts"
+
+    # Locale, keyboard, timezone (US)
+    - |
+      echo "[target] set locale=en_US.UTF-8, keyboard=us, tz=America/New_York"
+      # locale
+      sed -i 's/^# *en_US\.UTF-8/en_US.UTF-8/' "$1/etc/locale.gen"
+      chroot "$1" locale-gen
+      cat > "$1/etc/default/locale" <<'EOF'
+      LANG=en_US.UTF-8
+      LC_ALL=en_US.UTF-8
+      LANGUAGE=en_US:en
+      EOF
+      # keyboard
+      cat > "$1/etc/default/keyboard" <<'EOF'
+      XKBMODEL="pc105"
+      XKBLAYOUT="us"
+      XKBVARIANT=""
+      XKBOPTIONS=""
+      BACKSPACE="guess"
+      EOF
+      # timezone
+      echo "America/New_York" > "$1/etc/timezone"
+      ln -sf ../usr/share/zoneinfo/America/New_York "$1/etc/localtime"
+
+    # Create default user 'pi' with password 'raspberry' and sudo
+    - |
+      echo "[target] create user pi"
+      chroot "$1" bash -lc '
+        set -eu
+        id -u pi >/dev/null 2>&1 || useradd -m -s /bin/bash pi
+        echo "pi:raspberry" | chpasswd
+        usermod -aG sudo pi
+      '
+
+    # fstab
+    - |
+      echo "[target] fstab"
+      cat > "$1/etc/fstab" <<'EOF'
+      proc            /proc           proc    defaults          0       0
+      /dev/mmcblk0p1  /boot/firmware  vfat    defaults          0       2
+      /dev/mmcblk0p2  /               ext4    defaults,noatime  0       1
+      EOF
+
+    # Raspberry Pi firmware to /boot/firmware
+    - |
+      echo "[target] copy Raspberry Pi firmware"
+      if [ -d "$1/usr/lib/raspi-firmware" ]; then
+        cp -a "$1/usr/lib/raspi-firmware/." "$1/boot/firmware/"
+      fi
+
+    # config.txt
+    - |
+      echo "[target] config.txt"
+      cat > "$1/boot/firmware/config.txt" <<'EOF'
+      arm_64bit=1
+      enable_uart=1
+      dtoverlay=vc4-kms-v3d
+      hdmi_force_hotplug=1
+      EOF
+
+    # cmdline with PARTUUID
+    - |
+      echo "[host] cmdline.txt with real PARTUUID"
+      LOOPDEV="$(cat /tmp/rpi_loopdev)"
+      PARTUUID="$(blkid -s PARTUUID -o value "${LOOPDEV}p2")"
+      [ -n "$PARTUUID" ]
+      cat > "$1/boot/firmware/cmdline.txt" <<EOF
+      console=serial0,115200 console=tty1 root=PARTUUID=${PARTUUID} rootfstype=ext4 fsck.repair=yes rootwait
+      EOF
+
+    # NetworkManager as default networking
+    - |
+      echo "[target] enable NetworkManager and set US regulatory domain"
+      # Prefer NM over ifupdown (if ifupdown ever appears)
+      rm -f "$1/etc/network/interfaces" || true
+      mkdir -p "$1/etc/NetworkManager/conf.d"
+      cat > "$1/etc/NetworkManager/conf.d/10-main.conf" <<'EOF'
+      [main]
+      plugins=keyfile
+      dns=systemd-resolved
+      EOF
+      # Regulatory domain (runtime)
+      mkdir -p "$1/etc/default"
+      echo 'REGDOMAIN=US' > "$1/etc/default/crda"
+
+    # First-boot Wi-Fi importer + Hotspot fallback
+    - |
+      echo "[target] NM first-boot importer + hotspot fallback"
+      install -d "$1/usr/local/sbin"
+      cat > "$1/usr/local/sbin/nm-firstboot-import" <<'EOF'
+      #!/bin/sh
+      set -eu
+      BOOT=/boot/firmware
+      CONFDIR=/etc/NetworkManager/system-connections
+      WIFI_CON="$CONFDIR/wifi.nmconnection"
+      HOTSPOT_NAME="RatOS-Setup"
+      HOTSPOT_CON="hotspot"
+      HOTSPOT_PSK="ratos1234"
+
+      # Country override (no-op if fails)
+      iw reg set US 2>/dev/null || true
+
+      # If user provided a .nmconnection on BOOT, import it
+      if [ -f "$BOOT/wifi.nmconnection" ]; then
+        install -Dm600 "$BOOT/wifi.nmconnection" "$WIFI_CON"
+      fi
+
+      nmcli --wait 10 general reload || true
+
+      # Try to bring up a non-hotspot Wi-Fi if available
+      # Prefer the one we just imported (if present)
+      if [ -f "$WIFI_CON" ]; then
+        NAME="$(awk -F= '/^\[connection\]/{f=1} f&&/^id=/{print substr($0,4); exit}' "$WIFI_CON" 2>/dev/null || echo wifi)"
+        nmcli --wait 20 connection up "$NAME" || true
+      else
+        # Otherwise, if any saved Wi-Fi exists, autoconnect will handle it
+        :
+      fi
+
+      # Check if wlan0 is connected; if not, bring up hotspot
+      is_connected="$(nmcli -t -f DEVICE,STATE device 2>/dev/null | grep '^wlan0:' | cut -d: -f2 || echo '')"
+      case "$is_connected" in
+        connected) : ;;
+        *)
+          # Create hotspot profile if it doesn't exist
+          if ! nmcli -t -f NAME connection show | grep -qx "$HOTSPOT_CON"; then
+            nmcli connection add type wifi ifname wlan0 con-name "$HOTSPOT_CON" ssid "$HOTSPOT_NAME"
+            nmcli connection modify "$HOTSPOT_CON" 802-11-wireless.mode ap 802-11-wireless.band bg
+            nmcli connection modify "$HOTSPOT_CON" ipv4.method shared ipv6.method ignore
+            nmcli connection modify "$HOTSPOT_CON" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$HOTSPOT_PSK"
+            # Lower priority than real Wi-Fi; NM prefers higher number, so use 0 here
+            nmcli connection modify "$HOTSPOT_CON" connection.autoconnect-priority 0
+          fi
+          nmcli --wait 20 connection up "$HOTSPOT_CON" || true
+          ;;
+      esac
+
+      # This runs only once
+      systemctl disable nm-firstboot.service || true
+      exit 0
+      EOF
+      chmod 0755 "$1/usr/local/sbin/nm-firstboot-import"
+
+      # systemd unit to run once at boot
+      cat > "$1/etc/systemd/system/nm-firstboot.service" <<'EOF'
+      [Unit]
+      Description=Import Wi-Fi profile and start hotspot if needed on first boot
+      After=NetworkManager.service network-pre.target
+      Wants=NetworkManager.service
+      ConditionPathExists=|/boot/firmware/wifi.nmconnection
+      ConditionPathExists=!/etc/NetworkManager/system-connections/wifi.nmconnection
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/nm-firstboot-import
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      chroot "$1" systemctl enable NetworkManager.service || true
+      chroot "$1" systemctl enable nm-firstboot.service || true
+      # Ensure systemd-resolved is present/enabled (for DNS if using dns=systemd-resolved)
+      chroot "$1" systemctl enable systemd-resolved.service || true
+      ln -sf /run/systemd/resolve/stub-resolv.conf "$1/etc/resolv.conf" || true
+
+    # NetworkManager dispatcher action hooks (connect/disconnect + hotspot fallback later)
+    - |
+      echo "[target] NM dispatcher hooks"
+      install -d "$1/etc/NetworkManager/dispatcher.d" "$1/usr/local/lib/nm-dispatch/up" "$1/usr/local/lib/nm-dispatch/down"
+      # Dispatcher that fires user hooks
+      cat > "$1/etc/NetworkManager/dispatcher.d/10-user-hooks" <<'EOF'
+      #!/bin/sh
+      IFACE="$1"
+      STATE="$2"
+      case "$STATE" in
+        up)
+          for s in /usr/local/lib/nm-dispatch/up/*; do [ -x "$s" ] && "$s" "$IFACE" || true; done
+          ;;
+        down|disconnect|unavailable)
+          for s in /usr/local/lib/nm-dispatch/down/*; do [ -x "$s" ] && "$s" "$IFACE" || true; done
+          ;;
+      esac
+      exit 0
+      EOF
+      chmod 0755 "$1/etc/NetworkManager/dispatcher.d/10-user-hooks"
+
+      # Up hook: if a real Wi-Fi connects, tear down hotspot
+      cat > "$1/usr/local/lib/nm-dispatch/up/10-stop-hotspot" <<'EOF'
+      #!/bin/sh
+      IFACE="${1:-}"
+      [ "$IFACE" = "wlan0" ] || exit 0
+      # active connection name for wlan0
+      NAME="$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | awk -F: '$2=="wlan0"{print $1; exit}')"
+      # If we are NOT the hotspot, bring hotspot down if active
+      if [ "$NAME" != "hotspot" ] && nmcli -t -f NAME connection show --active | grep -qx "hotspot"; then
+        nmcli connection down hotspot || true
+      fi
+      exit 0
+      EOF
+      chmod 0755 "$1/usr/local/lib/nm-dispatch/up/10-stop-hotspot"
+
+      # Down hook: if Wi-Fi goes down and no other Wi-Fi connects, bring hotspot up
+      cat > "$1/usr/local/lib/nm-dispatch/down/20-start-hotspot" <<'EOF'
+      #!/bin/sh
+      IFACE="${1:-}"
+      [ "$IFACE" = "wlan0" ] || exit 0
+      # If nothing is connected on wlan0, start hotspot
+      STATE="$(nmcli -t -f DEVICE,STATE device 2>/dev/null | grep '^wlan0:' | cut -d: -f2 || echo '')"
+      if [ "$STATE" != "connected" ]; then
+        # Ensure hotspot profile exists
+        if ! nmcli -t -f NAME connection show | grep -qx "hotspot"; then
+          nmcli connection add type wifi ifname wlan0 con-name hotspot ssid "RatOS-Setup"
+          nmcli connection modify hotspot 802-11-wireless.mode ap 802-11-wireless.band bg
+          nmcli connection modify hotspot ipv4.method shared ipv6.method ignore
+          nmcli connection modify hotspot wifi-sec.key-mgmt wpa-psk wifi-sec.psk "ratos1234"
+          nmcli connection modify hotspot connection.autoconnect-priority 0
+        fi
+        nmcli --wait 20 connection up hotspot || true
+      fi
+      exit 0
+      EOF
+      chmod 0755 "$1/usr/local/lib/nm-dispatch/down/20-start-hotspot"
+
+      # Simple log hooks (optional)
+      cat > "$1/usr/local/lib/nm-dispatch/up/00-log" <<'EOF'
+      #!/bin/sh
+      logger -t nm-hook "Interface $1 is up"
+      EOF
+      chmod 0755 "$1/usr/local/lib/nm-dispatch/up/00-log"
+      cat > "$1/usr/local/lib/nm-dispatch/down/00-log" <<'EOF'
+      #!/bin/sh
+      logger -t nm-hook "Interface $1 is down"
+      EOF
+      chmod 0755 "$1/usr/local/lib/nm-dispatch/down/00-log"
+
+    # Ship README and sample Wi-Fi profile on BOOT
+    - |
+      echo "[target] ship Wi-Fi README + sample .nmconnection"
+      cat > "$1/boot/firmware/WiFi-README.txt" <<'EOF'
+      To configure Wi-Fi with NetworkManager:
+        1) On your PC, open the BOOT partition.
+        2) Copy a file named wifi.nmconnection here.
+           It must be an INI file with a [connection], [wifi], and [wifi-security] section.
+        3) Safely eject the card and boot the Pi.
+      The file is imported on first boot by nm-firstboot.service and then the service disables itself.
+
+      Example (wifi.nmconnection):
+      [connection]
+      id=HomeWiFi
+      type=wifi
+      interface-name=wlan0
+      permissions=
+
+      [wifi]
+      mode=infrastructure
+      ssid=YourSSID
+
+      [wifi-security]
+      key-mgmt=wpa-psk
+      psk=YourPassphrase
+
+      [ipv4]
+      method=auto
+
+      [ipv6]
+      method=ignore
+
+      Hotspot fallback:
+      If no known Wi-Fi connects, a hotspot "RatOS-Setup" (password "ratos1234") will be started and
+      share internet via IPv4 if eth0 is connected.
+      EOF
+
+    # Enable SSH by drop-in flag
+    - |
+      echo "[target] enable SSH by flag"
+      touch "$1/boot/firmware/ssh"
+
+    # Finalize
+    - |
+      echo "[host] finalize image (umount & detach)"
+      set -eu
+      sync
+      umount -f "$1/boot/firmware" || true
+      umount -f "$1" || true
+      LOOPDEV="$(cat /tmp/rpi_loopdev)"
+      sleep 1
+      losetup -d "$LOOPDEV"
+      OUT="${PWD}/minimal-rpi5-$(date +%Y%m%d-%H%M%S)-nm-hotspot.img"
+      mv /tmp/rpi5-minimal.img "$OUT"
+      echo "[host] image ready: $OUT"
