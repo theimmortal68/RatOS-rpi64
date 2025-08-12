@@ -1,74 +1,167 @@
-name: Build RaspiOS Base Image
+name: Build Minimal RPi Image (selectable + cached)
 
 on:
   workflow_dispatch:
+    inputs:
+      images:
+        description: "Comma-separated images (e.g. minimal,mainsail)"
+        default: "minimal"
+      suites:
+        description: "Comma-separated suites (e.g. bookworm,trixie)"
+        default: "bookworm"
+      archs:
+        description: "Comma-separated arches"
+        default: "arm64"
 
 jobs:
-  build:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.make_matrix.outputs.matrix }}
+    steps:
+      - uses: actions/github-script@v7
+        id: make_matrix
+        env:
+          IMAGES: ${{ github.event.inputs.images }}
+          SUITES: ${{ github.event.inputs.suites }}
+          ARCHS:  ${{ github.event.inputs.archs }}
+        with:
+          script: |
+            const imgs   = (process.env.IMAGES || 'minimal').split(',').map(s=>s.trim()).filter(Boolean);
+            const suites = (process.env.SUITES || 'bookworm').split(',').map(s=>s.trim()).filter(Boolean);
+            const archs  = (process.env.ARCHS  || 'arm64').split(',').map(s=>s.trim()).filter(Boolean);
+            const include = [];
+            for (const image of imgs) for (const suite of suites) for (const arch of archs) {
+              include.push({ image, suite, arch });
+            }
+            if (!include.length) include.push({ image: 'minimal', suite: 'bookworm', arch: 'arm64' });
+            core.setOutput('matrix', JSON.stringify({ include }));
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+
+    env:
+      IMAGE_DIR: images/${{ matrix.image }}
+      DEVICE_DIR: devices/rpi64
 
     steps:
-      - name: Checkout workflow repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies and GitHub CLI
-        run: |
-          set -e
-          sudo apt-get update
-          sudo apt-get install -y \
-            gnupg2 curl qemu-user-static binfmt-support gh
-          # Import missing Debian repo GPG keys
-          for key in 0E98404D386FA1D9 6ED0E7B82643E131 F8D2585B8783D481 54404762BBB6E853 BDE6D2B9216EC7A8 78DBA3BC47EF2265; do
-            sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys $key || \
-            curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${key}" | sudo gpg --dearmor -o /usr/share/keyrings/${key}.gpg
-          done
-          sudo modprobe binfmt_misc || true
-          sudo mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
-          sudo update-binfmts --enable qemu-aarch64
-
-      - name: Checkout rpi-image-gen repo
-        uses: actions/checkout@v4
+      - name: Set up QEMU (arm64)
+        uses: docker/setup-qemu-action@v3
         with:
-          repository: theimmortal68/rpi-image-gen
-          path: rpi-image-gen
-
-      - name: Make scripts executable
-        run: chmod +x rpi-image-gen/install_deps.sh rpi-image-gen/build.sh
+          platforms: arm64
 
       - name: Install build dependencies
-        working-directory: rpi-image-gen
-        run: sudo ./install_deps.sh
-
-      - name: Build image
-        run: ./rpi-image-gen/build.sh -o ./base/base.options -D ./base -c base.cfg
-
-      - name: Compress built image with xz
         run: |
-          set -e
-          IMG_PATH="/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/raspios-base/deploy/raspios-base.img"
-          xz -efvz9T3 "$IMG_PATH"
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bdebstrap mmdebstrap genimage \
+            qemu-user-static binfmt-support \
+            podman ca-certificates xz-utils curl
+          sudo update-binfmts --enable qemu-aarch64 || true
+          sudo update-binfmts --display qemu-aarch64 || true
+          chmod +x images/**/bdebstrap/* || true
+          chmod +x scripts/*.sh || true
+          # Install Mike Farah yq v4
+          YQ_VERSION=v4.44.3
+          curl -L "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" -o yq
+          sudo install -m 0755 yq /usr/local/bin/yq
+          rm yq
 
-      - name: Prepare release artifact and timestamp
-        id: buildinfo
+      - name: Compute OUTDIR/IMG paths
+        id: paths
         run: |
-          set -e
-          BUILDDATE=$(date +'%Y-%m-%d_%H-%M-%S')
-          echo "BUILDDATE=$BUILDDATE" >> $GITHUB_ENV
-          mv "/home/runner/work/RatOS-rpi64/RatOS-rpi64/rpi-image-gen/work/raspios-base/deploy/raspios-base.img.xz" \
-             "raspios-base-${BUILDDATE}.img.xz"
+          set -eu
+          OUTDIR="out/${{ matrix.image }}-rpi64-${{ matrix.suite }}-${{ matrix.arch }}"
+          echo "outdir=$OUTDIR"   >> "$GITHUB_OUTPUT"
+          echo "roottar=$OUTDIR/root.tar.xz" >> "$GITHUB_OUTPUT"
+          echo "rootdir=$OUTDIR/root"        >> "$GITHUB_OUTPUT"
+          echo "img=$OUTDIR/${{ matrix.image }}-rpi64-${{ matrix.suite }}-${{ matrix.arch }}.img" >> "$GITHUB_OUTPUT"
 
-      - name: Delete old 'latest' release if exists
+      # ---------- Compose mmdebstrap config (merge + suite inject) ----------
+      - name: Compose config.yaml
+        id: compose
         run: |
-          if gh release view latest &>/dev/null; then
-            gh release delete latest --yes
+          set -euxo pipefail
+          OUTDIR="${{ steps.paths.outputs.outdir }}"
+          mkdir -p "$OUTDIR"
+          # Substitute ${SUITE} in device layer
+          sed "s/\${SUITE}/${{ matrix.suite }}/g" "$DEVICE_DIR/layers.yaml" > "$OUTDIR/dev.yaml"
+          # Deep-merge device + image layers, then strip top-level 'mmdebstrap' key
+          yq eval-all '. as $item ireduce ({}; . * $item )' \
+            "$OUTDIR/dev.yaml" \
+            "$IMAGE_DIR/layers.yaml" \
+            | yq eval '.mmdebstrap' - > "$OUTDIR/config.yaml"
+          echo "config=$OUTDIR/config.yaml" >> "$GITHUB_OUTPUT"
+
+      # ---------- CACHE: rootfs tarball ----------
+      - name: Restore cache - rootfs tarball
+        id: cache-rootfs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.roottar }}
+            ${{ steps.paths.outputs.outdir }}/manifest
+            ${{ steps.paths.outputs.outdir }}/config.yaml
+          key: "${{ runner.os }}-rootfs-${{ matrix.image }}-${{ matrix.suite }}-${{ matrix.arch }}-${{ hashFiles(format('images/{0}/**', matrix.image),'devices/rpi64/**','images/**/bdebstrap/**','out/*/config.yaml') }}"
+
+      - name: Build rootfs (bdebstrap) on cache miss
+        if: steps.cache-rootfs.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          OUTDIR="${{ steps.paths.outputs.outdir }}"
+          rm -rf "${OUTDIR:?}/"*
+          podman unshare -- bdebstrap -c "${OUTDIR}/config.yaml" --name "${OUTDIR}"
+
+      # ---------- CACHE: expanded root directory ----------
+      - name: Restore cache - expanded root directory
+        id: cache-rootdir
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.paths.outputs.rootdir }}
+          key: "${{ runner.os }}-rootdir-${{ matrix.image }}-${{ matrix.suite }}-${{ matrix.arch }}-${{ hashFiles(format('images/{0}/**', matrix.image),'devices/rpi64/**','images/**/bdebstrap/**','out/*/config.yaml') }}"
+
+      - name: Inflate rootfs into rootdir on cache miss
+        if: steps.cache-rootdir.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          rm -rf "${{ steps.paths.outputs.rootdir }}"
+          mkdir -p "${{ steps.paths.outputs.rootdir }}"
+          tar -C "${{ steps.paths.outputs.rootdir }}" -xf "${{ steps.paths.outputs.roottar }}"
+
+      - name: Assemble disk image with genimage
+        run: |
+          set -euxo pipefail
+          scripts/genimage-wrapper.sh \
+            -r "${{ steps.paths.outputs.rootdir }}" \
+            -c "${{ env.IMAGE_DIR }}/genimage.cfg" \
+            -o "${{ steps.paths.outputs.outdir }}"
+          # Normalize image name to include image/suite/arch
+          IMG_DEFAULT="${{ steps.paths.outputs.outdir }}/${{ matrix.image }}-rpi64.img"
+          if [ -f "$IMG_DEFAULT" ]; then
+            mv "$IMG_DEFAULT" "${{ steps.paths.outputs.img }}"
+          else
+            mv "${{ steps.paths.outputs.outdir }}/minimal-rpi64.img" "${{ steps.paths.outputs.img }}" || true
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create new 'latest' GitHub Release
-        run: |
-          gh release create latest "raspios-base-${BUILDDATE}.img.xz" \
-            --title "RaspiOS Base Image — ${BUILDDATE}" \
-            --notes "This is the latest RaspiOS base image build.\n**Build date:** ${BUILDDATE}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload disk image
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.image }}-rpi64-${{ matrix.suite }}-${{ matrix.arch }}-img
+          path: ${{ steps.paths.outputs.img }}
+
+      - name: Upload rootfs tarball + metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.image }}-rpi64-${{ matrix.suite }}-${{ matrix.arch }}-rootfs
+          path: |
+            ${{ steps.paths.outputs.roottar }}
+            ${{ steps.paths.outputs.outdir }}/manifest
+            ${{ steps.paths.outputs.outdir }}/config.yaml
