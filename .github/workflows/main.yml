@@ -1,0 +1,87 @@
+name: Build RPi64 image (bdebstrap)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # Speed up repeated runs by caching apt state
+      - name: Restore apt cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /var/cache/apt
+            /var/lib/apt/lists
+          key: apt-${{ runner.os }}-${{ hashFiles('rpi64.yaml') }}
+          restore-keys: |
+            apt-${{ runner.os }}-
+
+      - name: Install system deps (mmdebstrap, binfmt, tooling)
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            mmdebstrap kpartx dosfstools e2fsprogs fdisk util-linux \
+            qemu-user-static binfmt-support \
+            xz-utils rsync curl ca-certificates jq python3-pip python3-venv
+
+          # Enable ARM binfmt (usually already enabled on GH runners)
+          sudo modprobe binfmt_misc || true
+          sudo mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
+          sudo update-binfmts --enable qemu-aarch64 || true
+
+          # Install the bdebstrap Python CLI (if you use it to drive mmdebstrap)
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user bdebstrap
+
+      - name: Start apt-cacher-ng (accelerate apt inside chroot)
+        run: |
+          set -euxo pipefail
+          sudo apt-get install -y apt-cacher-ng
+          sudo systemctl enable --now apt-cacher-ng
+          curl -fsS http://127.0.0.1:3142/acng-report.html >/dev/null || true
+
+      - name: Build image with bdebstrap
+        env:
+          # chroot apt will honor this automatically
+          APT_HTTP_PROXY: http://127.0.0.1:3142
+          BDEBSTRAP_LOG_LEVEL: DEBUG
+        run: |
+          set -euxo pipefail
+          # Prefer the Python CLI we just installed
+          ~/.local/bin/bdebstrap build --debug --config rpi64.yaml
+
+      - name: List produced images
+        run: |
+          ls -lah
+          echo "Candidate images:"
+          ls -1 *.img || true
+
+      - name: Compress newest image
+        if: always()
+        run: |
+          set -euxo pipefail
+          IMG="$(ls -1t *.img | head -n1)"
+          [ -n "$IMG" ]
+          xz -T0 -9ev "$IMG"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpi64-image
+          path: |
+            *.img.xz
+          if-no-files-found: error
+
+      - name: apt-cacher-ng stats (optional)
+        if: always()
+        run: |
+          set -euxo pipefail
+          curl -fsS http://127.0.0.1:3142/acng-report.html | head -n 200 || true
